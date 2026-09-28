@@ -1,0 +1,14 @@
+dead-cycle rule test   (still threshold = 3)
+
+  [about to capture]
+  [first capture ok]
+  still scene    delta = 0.00
+  PASS   an unchanged scene reads as STILL -> counted as a dead cycle
+  changed scene  delta = 129.00
+  PASS   a changed scene reads as MOVING -> not counted as dead
+  animating max  delta = 145.33
+  PASS   sustained motion always exceeds the threshold
+  tiny change    delta = 0.33
+  PASS   a barely-visible change scores far below real motion
+
+4 passed, 0 failed

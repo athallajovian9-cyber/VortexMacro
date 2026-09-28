@@ -1,0 +1,21 @@
+# The bundled interpreter is a third-party binary. It is attached to the
+# GitHub Release as a ready-to-run zip, but it should not be tracked in git:
+# it is 2.5 MB of someone else's code that changes on its own release cycle.
+submacro/*.exe
+
+# Per-user state. None of this belongs in a repository: it is what the app
+# writes on this machine (last location, chosen options, session log).
+settings/*.log
+settings/*.ini
+
+# Recorded routes are personal - they encode one player's run of one loop.
+# The release ships no routes; each user records their own.
+maps/*.route
+
+# Python bytecode from the audit tooling
+__pycache__/
+*.pyc
+
+# Release output
+dist/
+*.zip

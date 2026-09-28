@@ -1,0 +1,8 @@
+# No end-of-line conversion, anywhere.
+#
+# launcher.bat must be CRLF or cmd.exe mis-parses it, and README.txt is
+# validated as CRLF. Letting git normalise line endings would mean the file in
+# the repository differs from the file that ships, and a fresh clone on another
+# machine could hand the user a .bat that does not run. Treat everything as
+# opaque bytes so what is committed is what ships.
+* -text
