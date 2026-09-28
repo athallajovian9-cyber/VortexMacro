@@ -158,6 +158,7 @@ IsRecording  := false                        ; relative to this, so a window
 RouteT0      := 0                            ; that has moved still replays
 HasRoute     := false  ; a route was loaded for the active location
 RouteDead    := 0      ; consecutive cycles that changed nothing on screen
+RouteBlank   := false  ; last capture was a blank surface - see _SigBlank
 RouteMaxDelta := 0     ; biggest scene change seen during the last replay
 RouteHeld    := false  ; last replay was stalled waiting for Roblox to be focused
 LocArmed     := false  ; true once the window is up; see _PickLocation
@@ -180,6 +181,18 @@ _InitStepStats()
 SetKeyDelay(Opt["keyDelay"], 20)
 
 _BuildGui()
+
+; A "run" argument starts the main loop immediately instead of waiting for F1.
+; Useful on its own (farm the moment the launcher opens), and it is the only way
+; to exercise a real replay without a human at the keyboard: a script cannot
+; trigger another script's hotkeys, because injected keyboard input is invisible
+; to them (measured - see the recorder notes above).
+for a in A_Args {
+    if (a = "run") {
+        _Log("Started with the 'run' argument - beginning the main loop now.")
+        SetTimer(_OnStart, -1500)
+    }
+}
 
 ; =====================================================================
 ;  GUI
@@ -689,6 +702,24 @@ _VkToken(vk) {
     return VK_MOUSE.Has(vk) ? VK_MOUSE[vk] : "vk" . Format("{:02X}", vk)
 }
 
+; Is this signature a blank surface rather than a picture of a game?
+;
+; A hardware-accelerated or exclusive-fullscreen game can hand GDI a pure-black
+; rectangle. That reads as "the screen never changed" no matter what the game is
+; doing, which is indistinguishable from a broken route - and the macro would
+; then tell the user to re-record a route that was never the problem. Cheap to
+; tell apart: count how much of the frame is lit at all.
+_SigBlank(buf, gw := 32, gh := 18) {
+    lit := 0
+    loop gw * gh {
+        off := (A_Index - 1) * 4
+        if (NumGet(buf, off, "UChar") + NumGet(buf, off + 1, "UChar")
+            + NumGet(buf, off + 2, "UChar") > 24)
+            lit += 1
+    }
+    return (lit < gw * gh * 0.05)        ; under 5% lit is effectively blank
+}
+
 ; A human-readable name, for the log and the status line only. Falls back to
 ; the raw token, so an unmapped key is reported rather than dropped.
 _VkName(vk) {
@@ -977,7 +1008,7 @@ _RouteSummary() {
 
 ; Replay the recorded events at their original timings.
 _RoutePlay() {
-    global RouteRec, Toggle, Opt, RouteMaxDelta, RouteHeld, RouteClient
+    global RouteRec, Toggle, Opt, RouteMaxDelta, RouteHeld, RouteClient, RouteBlank
 
     if (RouteRec.Length = 0)
         return false
@@ -989,6 +1020,7 @@ _RoutePlay() {
     r := _GameRect()
     RouteClient := r             ; recorded cursor positions are relative to this
     prev := _CaptureSig(r)
+    RouteBlank := _SigBlank(prev)   ; blank capture is not the route's fault
     RouteMaxDelta := 0
     RouteHeld := false
     held := Map()                ; what THIS route pressed and has not released,
@@ -1192,7 +1224,7 @@ _RunStepCycle() {
 
 ; One cycle driven by the recording instead of by guessed steps.
 _RunRouteCycle() {
-    global RouteMaxDelta, Opt, RouteDead, Toggle, MainGui, RouteHeld
+    global RouteMaxDelta, Opt, RouteDead, Toggle, MainGui, RouteHeld, RouteBlank
 
     _SetStatus("REPLAYING ROUTE", "c8FA0C0")
     _SetProgress(50)
@@ -1215,6 +1247,22 @@ _RunRouteCycle() {
     ; regardless; stop instead, because a run that farms nothing is worse than
     ; one that stops and says why.
     if (RouteMaxDelta <= Opt["stillTol"]) {
+        ; A blank capture is NOT the route's fault, and saying "record it again"
+        ; would send the user off to redo work that was never the problem. This
+        ; was found by testing against the live game, where the capture came
+        ; back pure black and the macro blamed the route for it.
+        if (RouteBlank) {
+            Toggle := false
+            _SetStatus("CANNOT SEE THE GAME - USE WINDOWED", "cF0C040")
+            _Log("STOPPED: screen capture is coming back blank (a single flat")
+            _Log("  colour), so the macro cannot tell whether the route works.")
+            _Log("  This happens on exclusive fullscreen and hardware-accelerated")
+            _Log("  surfaces. Set the game to Windowed or Borderless and retry -")
+            _Log("  the route itself is probably fine. Press F5 to check capture.")
+            if (Opt["hideWhileRunning"])
+                MainGui.Show()
+            return
+        }
         RouteDead += 1
         _Log("Route cycle did nothing - the screen never changed   (dead cycle "
             . RouteDead . " of " . Opt["deadCycles"] . ")")
@@ -1231,6 +1279,11 @@ _RunRouteCycle() {
         if (RouteDead)
             _Log("Route is moving again - resetting the dead-cycle count.")
         RouteDead := 0
+        ; Report what it measured, every cycle. "It ran but nothing happened" is
+        ; the hardest failure to diagnose from outside, and this turns it into
+        ; one line that can be read back afterwards.
+        _Log("Route cycle moved the screen - max change " . Round(RouteMaxDelta, 1)
+            . " (threshold " . Opt["stillTol"] . ")")
     }
 }
 

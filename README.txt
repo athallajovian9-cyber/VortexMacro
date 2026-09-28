@@ -398,6 +398,15 @@ a placeholder and record a route before expecting a real harvest.
   settletest.ahk           checks that a still screen is detected
   scene_capture_test.ahk   checks that the screen can be captured
   deadcycle_test.ahk       checks the "route stopped working" rule
+  blankcapture_test.ahk    checks a black screen is told apart from a
+                           still game, so it stops for the right reason
+  record_anykey_test.ahk   checks the recorder catches every key, not
+                           just the ones that used to be on a short list
+  replay_vk_test.ahk       checks a replay really presses the keys it
+                           replays. THIS ONE SENDS REAL KEYSTROKES -
+                           it types into its own window and gives your
+                           focus back, so it is safe to run, but do
+                           not change it to aim at your desktop.
 
 
 --------------------------------------------------------------------

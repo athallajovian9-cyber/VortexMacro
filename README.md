@@ -141,7 +141,15 @@ vision_test.ahk          pixel-reading primitives
 settletest.ahk           "does it notice when the screen stops changing"
 scene_capture_test.ahk   can the screen be captured at all
 deadcycle_test.ahk       "does it notice a route that stopped working"
+blankcapture_test.ahk    "is a black capture told apart from a still game"
+record_anykey_test.ahk   "does the recorder catch every key, not just some"
+replay_vk_test.ahk       "does a replay really press the keys it replays"
 ```
+
+`replay_vk_test.ahk` **injects real input.** It builds its own window, parks the
+cursor on it, and hands the previous foreground window back afterwards, so
+nothing can reach whatever you had focused. Do not modify it to point at the
+live desktop.
 
 The two Python tools in `tools/` are static checks over the source, for
 development:

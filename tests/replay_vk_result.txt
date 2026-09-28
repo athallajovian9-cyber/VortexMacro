@@ -1,0 +1,38 @@
+replay path   (does sending a virtual-key token press the real key?)
+
+  sandbox window: 68,91 520x300
+
+  w  (vk57)
+  PASS    press is visible to the OS  (vk 0x57)
+  PASS    release clears it - nothing left held
+  Tab  (vk09)
+  PASS    press is visible to the OS  (vk 0x09)
+  PASS    release clears it - nothing left held
+  F9  (vk78)
+  PASS    press is visible to the OS  (vk 0x78)
+  PASS    release clears it - nothing left held
+  Enter  (vk0D)
+  PASS    press is visible to the OS  (vk 0x0D)
+  PASS    release clears it - nothing left held
+  space  (vk20)
+  PASS    press is visible to the OS  (vk 0x20)
+  PASS    release clears it - nothing left held
+  mouse-left  (LButton)
+  PASS    press is visible to the OS  (vk 0x01)
+  PASS    release clears it - nothing left held
+
+  hold timing (the replay waits on this same clock)
+    asked 300 ms, measured 312 ms
+  PASS    a 300 ms hold lands within 30 ms
+
+  cursor positioning
+    asked 508,331   OS reports 508,331
+  PASS    MouseMove lands exactly where asked
+    stored relative to the window -> 440,240
+  PASS    relative coords round-trip exactly
+
+  cleanup
+    tokens still held after all tests: 0
+  PASS    no key left held when the replay finished
+
+16 passed, 0 failed

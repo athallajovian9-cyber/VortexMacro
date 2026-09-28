@@ -1,0 +1,10 @@
+pure black surface      -> blank = yes
+  PASS  a black surface is reported as blank
+near-black (1,1,2)      -> blank = yes
+  PASS  a near-black surface is still blank (compression noise)
+mid blue surface        -> blank = NO
+  PASS  a normal coloured surface is NOT blank
+dark UI surface         -> blank = NO
+  PASS  a very dark but real UI is NOT blank (16,19,23 - the macro's own theme)
+
+4 passed, 0 failed

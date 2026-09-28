@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.1.1
+
+The first build tested against a **live Roblox session**, rather than synthetic
+screens. That test found a bug worth a release on its own.
+
+**A blank screen capture was blamed on your route.** If the game is on
+exclusive fullscreen or a hardware-accelerated surface, GDI can hand the macro a
+pure-black rectangle. That reads as "the screen never changed", which is exactly
+what a broken route looks like — so after three cycles the macro stopped and
+told the user to re-record a route that was never the problem.
+
+The capture is now checked for being blank, and that case stops with the real
+explanation instead:
+
+```
+STOPPED: screen capture is coming back blank (a single flat colour), so the
+  macro cannot tell whether the route works. This happens on exclusive
+  fullscreen and hardware-accelerated surfaces. Set the game to Windowed or
+  Borderless and retry - the route itself is probably fine.
+```
+
+Verified against real pixels (`tests/blankcapture_test.ahk`, 4/4): pure black
+and near-black surfaces are detected as blank, a normal colour is not, and a
+very dark but real UI is not — including this program's own dark theme at
+(16,19,23), which is the false positive that would have broken it.
+
+**`run` argument.** `VortexMacro.ahk run` starts the main loop immediately
+instead of waiting for F1. It exists because a script cannot press another
+script's hotkeys — injected keyboard input is invisible to them — so it was the
+only way to exercise a real replay without a human at the keyboard.
+
+**Every route cycle now logs what it measured:**
+
+```
+Route cycle moved the screen - max change 9.4 (threshold 3)
+```
+
+"It ran but nothing happened" was the hardest failure to diagnose from outside.
+Now it is one readable line.
+
+**Verified on the replay path** (`tests/replay_vk_test.ahk`, 16/16): every
+stored token presses a real key visible to the OS and releases clean, a 300 ms
+hold lands at 312 ms, `MouseMove` lands exactly where asked, relative
+coordinates round-trip, and nothing is left held when the replay ends. The test
+builds its own window, parks the cursor on it, and restores the previous
+foreground window — it injects real input, so it must never run against the
+live desktop.
+
+**Also confirmed live:** the foreground guard held input while the game was not
+focused and resumed by itself when it was, in a real session rather than a
+synthetic window.
+
 ## 1.1.0
 
 **Why this build exists.** A tiny free recorder already does plain
