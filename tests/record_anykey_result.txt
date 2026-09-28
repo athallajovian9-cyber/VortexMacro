@@ -1,0 +1,14 @@
+recorder key coverage   (VK sweep against real key state)
+
+  events captured: 12   every event carries a cursor position: yes
+
+  PASS  z       -> vk5A      reads as 'z'  (NOT in the old list)
+  PASS  Tab     -> vk09      reads as 'Tab'  (NOT in the old list)
+  PASS  F9      -> vk78      reads as 'F9'  (NOT in the old list)
+  PASS  Enter   -> vk0D      reads as 'Enter'  (NOT in the old list)
+  PASS  w       -> vk57      reads as 'w'  (was in the old list)
+  PASS  LButton -> LButton    (mouse button)
+
+  distinct tokens seen: 6
+
+6 passed, 0 failed

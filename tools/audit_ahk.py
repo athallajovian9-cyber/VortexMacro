@@ -68,6 +68,8 @@ BUILTINS = {
     "GuiFromHwnd", "DriveGetType", "FileGetSize", "FileGetTime", "FileGetAttrib",
     "FileGetVersion", "FileSetTime", "FileSetAttrib", "FileCreateShortcut",
     "DirCopy", "DirMove", "FileMove", "EnvGet", "EnvSet", "A_Args",
+    "HasProp", "GetKeyName", "MouseGetPos", "MouseMove", "GetMethod", "ObjGetBase",
+    "ClipboardAll", "DriveGet", "SoundBeep", "SoundPlay", "WinActivateBottom",
 }
 
 # language keywords that are followed by "(" and must not be treated as calls

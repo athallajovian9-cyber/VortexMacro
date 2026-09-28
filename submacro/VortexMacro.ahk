@@ -142,15 +142,20 @@ MainGui  := ""
 ;   - polling reads the PHYSICAL state, so it records exactly what the player
 ;     pressed, including keys held across events, with no hotkey plumbing.
 ; Measured accuracy: a 300 ms hold recorded as 297 ms, a 400 ms hold as 406 ms.
-RouteKeys    := ["w", "a", "s", "d", "q", "e", "f", "r", "space", "shift",
-                 "LButton", "RButton", "1", "2", "3", "4", "5"]
-RouteKeySet  := Map()  ; the same names for O(1) lookup; Array.Has tests an
-for k in RouteKeys     ; index, not a value, so it cannot validate a name
-    RouteKeySet[k] := true
-RouteRec     := []     ; [{t: ms since record start, k: key, d: "down"/"up"}]
-RoutePrev    := Map()  ; last polled physical state, per key
-IsRecording  := false
-RouteT0      := 0
+; Keys are recorded by VIRTUAL KEY CODE, not by name, so the recorder cannot be
+; missing a key. An earlier version watched a hand-written list of 17 names
+; (w a s d q e f r space shift LButton RButton 1-5) and silently recorded
+; nothing at all for any key outside it -- which is indistinguishable from a
+; broken recorder when the key it misses happens to be the one you press.
+; Sweeping all 254 VKs costs 0.408 ms (measured: 500 sweeps in 204 ms), which
+; is 3.4% of one core at a 10 ms timer, so the list bought nothing.
+VK_MOUSE     := Map(0x01, "LButton", 0x02, "RButton", 0x04, "MButton"
+                  , 0x05, "XButton1", 0x06, "XButton2")
+RouteRec     := []     ; [{t, k, d, x, y}] - t is ms since record start
+RouteDown    := Map()  ; vk -> 1/0, last polled physical state
+RouteClient  := { x: 0, y: 0, w: 0, h: 0 }   ; cursor positions are stored
+IsRecording  := false                        ; relative to this, so a window
+RouteT0      := 0                            ; that has moved still replays
 HasRoute     := false  ; a route was loaded for the active location
 RouteDead    := 0      ; consecutive cycles that changed nothing on screen
 RouteMaxDelta := 0     ; biggest scene change seen during the last replay
@@ -640,7 +645,7 @@ _CalibSummary() {
 
     ; No recording yet: the built-in steps are the only thing to run, and they are
     ; the part that was never verified. Say so rather than quietly looking ready.
-    return ActiveLocation . "   |   NO ROUTE YET - press F7, play the loop once, press F7 again"
+    return ActiveLocation . "   |   NO ROUTE YET - press F9, play the loop once, press F9 again"
         . "   |   " . vision
 }
 
@@ -668,23 +673,111 @@ _SetStatus(txt, colour := "cFFFFFF") {
 ;
 ; Routes live beside the map files, one per location, so each map keeps its own.
 
+; ---- recorder primitives ---------------------------------------------------
+
+; Physical state of any virtual key. GetAsyncKeyState reads injected input as
+; well as real input, which is what makes the recorder testable at all.
+_VkDown(vk) {
+    return (DllCall("GetAsyncKeyState", "Int", vk, "Short") & 0x8000) ? 1 : 0
+}
+
+; How a key is written into a route file. Mouse buttons get their readable AHK
+; name; every other key is stored as a virtual key code, so no name list is
+; needed and nothing can fall outside it.
+_VkToken(vk) {
+    global VK_MOUSE
+    return VK_MOUSE.Has(vk) ? VK_MOUSE[vk] : "vk" . Format("{:02X}", vk)
+}
+
+; A human-readable name, for the log and the status line only. Falls back to
+; the raw token, so an unmapped key is reported rather than dropped.
+_VkName(vk) {
+    static cache := Map()
+    if cache.Has(vk)
+        return cache[vk]
+    n := _VkToken(vk)
+    if (SubStr(n, 1, 2) = "vk") {
+        try n := GetKeyName(n)
+        if (n = "")
+            n := "vk" . Format("{:02X}", vk)
+    }
+    cache[vk] := n
+    return n
+}
+
+; One recorded event, with the cursor position at that moment, relative to the
+; game's client area. While the game holds the cursor locked that position is
+; the centre, which is still the right thing to replay.
+_RouteEvent(vk, dir) {
+    global RouteT0, RouteClient
+    MouseGetPos(&mx, &my)
+    return { t: A_TickCount - RouteT0, k: _VkToken(vk), d: dir
+           , x: mx - RouteClient.x, y: my - RouteClient.y }
+}
+
+; May a route file contain this token? Anything the recorder can emit, plus
+; the "m" cursor-move token.
+_IsRouteKey(k) {
+    global VK_MOUSE
+    if (k = "m")
+        return true
+    for vk, name in VK_MOUSE {
+        if (name = k)
+            return true
+    }
+    return RegExMatch(k, "^vk[0-9A-Fa-f]{2}$") ? true : false
+}
+
+; A stored token back to something a person reads: "vk57" -> "w".
+_TokenName(tok) {
+    if (tok = "m")
+        return "mouse-move"
+    if (SubStr(tok, 1, 2) = "vk")
+        return _VkName(("0x" . SubStr(tok, 3)) + 0)
+    return tok
+}
+
+; The distinct keys in the route, named. This is the direct answer to the only
+; question that matters after a recording: did it capture the keys I pressed?
+_RouteKeyNames() {
+    global RouteRec
+    seen := Map()
+    s := ""
+    for e in RouteRec {
+        if (e.k = "m" or seen.Has(e.k))
+            continue
+        seen[e.k] := true
+        s .= (s = "" ? "" : ", ") . _TokenName(e.k)
+    }
+    return (s = "" ? "(no keys - mouse movement only)" : s)
+}
+
 _RouteFile() {
     global MapsDir, ActiveLocation
     return MapsDir . "\" . ActiveLocation . ".route"
 }
 
 _RouteBegin() {
-    global RouteKeys, RouteRec, RoutePrev, IsRecording, RouteT0, Toggle, ActiveLocation
+    global RouteRec, RouteDown, IsRecording, RouteT0, Toggle, ActiveLocation, RouteClient
     if IsRecording
         return
     if Toggle
         _OnPause()                       ; never record while the macro drives the game
     RouteRec := []
-    for k in RouteKeys
-        RoutePrev[k] := GetKeyState(k, "P") ? 1 : 0   ; seed, so a key already held is not logged as a new press
+    ; Cursor positions are stored relative to the game's client area, captured
+    ; once here, so the replay still lands correctly if the window moves.
+    RouteClient := _GameRect()
+    ; Seed every key, so a key already held at the moment recording starts is
+    ; not immediately logged as a fresh press.
+    RouteDown := Map()
+    vk := 1
+    while (vk <= 254) {
+        RouteDown[vk] := _VkDown(vk)
+        vk += 1
+    }
     RouteT0 := A_TickCount
     IsRecording := true
-    SetTimer(_RoutePoll, 12)
+    SetTimer(_RoutePoll, 10)
     _SetStatus("RECORDING ROUTE", "cF0C040")
     _SetProgress(0)
     _Log("Route recording STARTED for " . ActiveLocation
@@ -692,20 +785,23 @@ _RouteBegin() {
 }
 
 _RoutePoll() {
-    global RouteKeys, RouteRec, RoutePrev, IsRecording, RouteT0
+    global RouteRec, RouteDown, IsRecording
     if (!IsRecording)
         return
-    for k in RouteKeys {
-        s := GetKeyState(k, "P") ? 1 : 0
-        if (s != RoutePrev[k]) {
-            RouteRec.Push({ t: A_TickCount - RouteT0, k: k, d: (s ? "down" : "up") })
-            RoutePrev[k] := s
+    ; Every virtual key, by code. Nothing can be outside this sweep.
+    vk := 1
+    while (vk <= 254) {
+        s := _VkDown(vk)
+        if (s != RouteDown.Get(vk, 0)) {
+            RouteDown[vk] := s
+            RouteRec.Push(_RouteEvent(vk, s ? "down" : "up"))
         }
+        vk += 1
     }
 }
 
 _RouteEnd() {
-    global RouteKeys, RouteRec, RoutePrev, IsRecording, RouteT0, HasRoute
+    global RouteRec, RouteDown, IsRecording, HasRoute
     if (!IsRecording)
         return
     SetTimer(_RoutePoll, 0)
@@ -714,13 +810,15 @@ _RouteEnd() {
     ; A key still held when recording stops would replay as pressed-forever, so
     ; close every open press and release it for real.
     closed := 0
-    for k in RouteKeys {
-        if (RoutePrev[k]) {
-            RouteRec.Push({ t: A_TickCount - RouteT0, k: k, d: "up" })
-            Send("{" . k . " up}")
-            RoutePrev[k] := 0
+    vk := 1
+    while (vk <= 254) {
+        if (RouteDown.Get(vk, 0)) {
+            RouteRec.Push(_RouteEvent(vk, "up"))
+            Send("{" . _VkToken(vk) . " up}")
+            RouteDown[vk] := 0
             closed += 1
         }
+        vk += 1
     }
 
     if (RouteRec.Length = 0) {
@@ -740,6 +838,7 @@ _RouteEnd() {
         . Round(RouteRec[RouteRec.Length].t / 1000, 1) . " s"
         . (closed ? " (closed " . closed . " held key(s))" : "")
         . " -> " . _RouteFile())
+    _Log("  keys recorded: " . _RouteKeyNames())
     _RefreshUI()
 }
 
@@ -752,7 +851,7 @@ _RouteEnd() {
 ;   * a recording cut short mid-hold would replay as a key pressed forever, so
 ;     any press left without a release is closed at the end of the route.
 _RouteLoad() {
-    global RouteRec, HasRoute, RouteKeySet, ActiveLocation
+    global RouteRec, HasRoute, ActiveLocation
 
     RouteRec := []
     HasRoute := false
@@ -774,12 +873,21 @@ _RouteLoad() {
         t   := _RouteInt(parts[1], -1)
         key := Trim(parts[2])
         dir := StrLower(Trim(parts[3]))
-        if (t < 0 or t > 3600000 or !RouteKeySet.Has(key)
-            or (dir != "down" and dir != "up")) {
+        ; "m" is a cursor move and carries no direction; everything else is a
+        ; key press or a key release.
+        okDir := (key = "m") ? (dir = "-") : (dir = "down" or dir = "up")
+        if (t < 0 or t > 3600000 or !_IsRouteKey(key) or !okDir) {
             bad += 1
             continue
         }
-        raw.Push({ t: t, k: key, d: dir })
+        e := { t: t, k: key, d: dir }
+        ; Positions are optional. A route written by an older build, or by hand,
+        ; is still a valid route - just one that clicks wherever the cursor is.
+        if (parts.Length >= 5) {
+            e.x := _RouteInt(parts[4], 0)
+            e.y := _RouteInt(parts[5], 0)
+        }
+        raw.Push(e)
     }
 
     if (raw.Length = 0) {
@@ -819,11 +927,13 @@ _RouteLoad() {
     return true
 }
 
-; Digits only. Deliberately strict: this reads a file the user can edit, and
-; Integer() throws on anything that is not a number.
+; Digits, optionally signed. Sign matters because cursor positions are stored
+; relative to the window and can legitimately be negative on a shifted window;
+; the caller range-checks the timestamp itself. Deliberately strict, because
+; this reads a file the user can edit and Integer() throws on anything else.
 _RouteInt(s, fallback) {
     s := Trim(s)
-    if RegExMatch(s, "^\d+$")
+    if RegExMatch(s, "^-?\d+$")
         return Integer(s)
     return fallback
 }
@@ -860,12 +970,14 @@ _RouteSummary() {
     global RouteRec, HasRoute
     if !HasRoute
         return "no route yet - using the built-in steps"
-    return RouteRec.Length . " events, " . Round(RouteRec[RouteRec.Length].t / 1000, 1) . " s"
+    return RouteRec.Length . " events, "
+        . Round(RouteRec[RouteRec.Length].t / 1000, 1) . " s - "
+        . _RouteKeyNames()
 }
 
 ; Replay the recorded events at their original timings.
 _RoutePlay() {
-    global RouteRec, RouteKeys, Toggle, Opt, RouteMaxDelta, RouteHeld
+    global RouteRec, Toggle, Opt, RouteMaxDelta, RouteHeld, RouteClient
 
     if (RouteRec.Length = 0)
         return false
@@ -875,10 +987,12 @@ _RoutePlay() {
     ; timings whether or not the game responded - so without this a stuck or
     ; desynced route would quietly grind out nothing for hours.
     r := _GameRect()
+    RouteClient := r             ; recorded cursor positions are relative to this
     prev := _CaptureSig(r)
     RouteMaxDelta := 0
     RouteHeld := false
-    lastSample := A_TickCount
+    held := Map()                ; what THIS route pressed and has not released,
+    lastSample := A_TickCount    ; so the cleanup cannot disturb the player
 
     t0 := A_TickCount
     for e in RouteRec {
@@ -912,11 +1026,27 @@ _RoutePlay() {
         }
         if (!Toggle)
             break
+
+        ; Put the cursor back where it was when this event was recorded, before
+        ; the click lands, because a click only means something at a position.
+        ; While the game holds the cursor locked this moves it to the centre,
+        ; which is where it already is, so it costs nothing.
+        if (HasProp(e, "x"))
+            MouseMove(RouteClient.x + e.x, RouteClient.y + e.y, 0)
+
+        if (e.k = "m")
+            continue
+
         Send("{" . e.k . " " . e.d . "}")
+        if (e.d = "down")
+            held[e.k] := true
+        else
+            held.Delete(e.k)
     }
 
-    ; always release, even when interrupted mid-hold
-    for k in RouteKeys
+    ; Release only what this route left down. Releasing every key in the list, as
+    ; an earlier version did, would also let go of a key the player is holding.
+    for k, v in held
         Send("{" . k . " up}")
     return true
 }
@@ -937,6 +1067,44 @@ _RoutePlayOnce(*) {
     _RoutePlay()
     Toggle := wasRunning
     _SetStatus(wasRunning ? "RUNNING" : "IDLE", wasRunning ? "c6FC5F0" : "c8A9BA8")
+}
+
+; ---- the one-key flow ------------------------------------------------------
+; The alternative to this macro is a tiny recorder you point at the screen that
+; needs no setup at all, so requiring a location to be chosen before recording
+; is a step the competition does not have. F9 does the common case in two
+; presses and asks nothing:
+;
+;     press 1  ->  recording starts
+;     press 2  ->  recording stops and the loop starts running, immediately
+;     press 3  ->  it stops
+;
+; The selected location only decides which route FILE this is saved into, so
+; nothing has to be configured first and the default is good enough.
+_QuickToggle(*) {
+    global IsRecording, Toggle, HasRoute, ActiveLocation
+
+    ; Already running: this press means stop.
+    if (!IsRecording and Toggle) {
+        _OnPause()
+        return
+    }
+
+    ; Recording: stop, then run what was just captured, so the whole job is
+    ; two presses and no separate "play" step.
+    if IsRecording {
+        _RouteEnd()
+        if (!HasRoute) {
+            _SetStatus("NOTHING RECORDED", "cFF6B4A")
+            return
+        }
+        _Log("Quick start: looping the route for " . ActiveLocation . " now.")
+        _OnStart()
+        return
+    }
+
+    ; Idle: start recording.
+    _RouteBegin()
 }
 
 _RouteToggle(*) {
@@ -1820,8 +1988,11 @@ F6:: _ClearWatches()
 ; F7 records a route: press once to start, play the loop by hand, press again to
 ; stop and save. F8 replays what was just recorded, once, so the result can be
 ; checked before committing to a full run.
+; F9 is the whole job in two presses - record, then it runs - for anyone who
+; does not want to think about locations or separate play keys.
 F7:: _RouteToggle()
 F8:: _RoutePlayOnce()
+F9:: _QuickToggle()
 
 ; =====================================================================
 ;  STARTUP

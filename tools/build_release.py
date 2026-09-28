@@ -44,10 +44,9 @@ INCLUDE_DIRS = [
 # Per-user state and build output. Belt and braces: INCLUDE_DIRS would pick
 # these up, so they are removed by name after selection.
 EXCLUDE_NAMES = {"__pycache__", "dist", ".git"}
-EXCLUDE_SUFFIXES = (".route", ".pyc", ".log")
+EXCLUDE_SUFFIXES = (".route", ".pyc", ".log", "_result.txt")
 EXCLUDE_EXACT = {
     os.path.join("settings", "vortex_config.ini"),
-    os.path.join("tests", "deadcycle_result.txt"),
 }
 
 # The interpreter must be a real binary of exactly this size, or the release is

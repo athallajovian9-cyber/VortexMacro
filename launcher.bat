@@ -6,7 +6,8 @@ cls
 
 :: ---------------------------------------------------------------
 ::  Vortex Macro launcher (portable, no installer required)
-::  F1 = start   F2 = pause/stop   F7 = record route   F8 = play once   Tray = quit
+::  F9 = record AND run (two presses)   F1 = start   F2 = stop   Tray = quit
+::  F7 = record only   F8 = replay once
 ::
 ::  System tools are called by absolute path on purpose: a shell
 ::  such as Git Bash on PATH ships its own find.exe, which shadows

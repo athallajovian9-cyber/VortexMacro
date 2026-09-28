@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.1.0
+
+**Why this build exists.** A tiny free recorder already does plain
+record-and-replay, and it does it well. If that is all this did, there would be
+no reason to use it. So this release removes the reasons it was harder than
+that recorder, and makes the two things that recorder cannot do explicit.
+
+**The recorder no longer has a key list.** It previously watched 17 hard-coded
+key names (`w a s d q e f r space shift LButton RButton 1-5`) and silently
+recorded nothing at all for any key outside it — which is indistinguishable
+from a broken recorder when the key it misses is the one you press. Keys are
+now recorded by virtual key code, so nothing can fall outside the sweep.
+Measured: all 254 virtual keys cost **0.408 ms per sweep** (500 sweeps in
+204 ms), 3.4% of one core at a 10 ms timer, so the list bought nothing.
+Verified against real key state with `tests/record_anykey_test.ahk`: `z`,
+`Tab`, `F9` and `Enter` — none of which the old list contained — are all
+captured, with `w` kept as a control. 6/6 pass.
+
+**Cursor positions are recorded and replayed.** A click only means something at
+a position. Every event now stores the cursor position relative to the game's
+client area, captured once per recording, so a window that has moved still
+replays in the right place. While the game holds the cursor locked this records
+the centre and replays to the centre, which is where it already is.
+
+**The release key only releases what it pressed.** The old cleanup released
+every key in the key list when a cycle ended, which would also let go of a key
+the player was holding. It now tracks exactly what the route pressed and
+releases only that.
+
+**`F9` — the whole job in two presses.** The competing recorder needs no setup
+at all, and requiring a location to be chosen before recording was a step it
+does not have. F9 records on the first press and, on the second, saves the loop
+and starts running it immediately. Nothing has to be configured first; the
+selected location only decides which route file it is saved into. `F7`/`F8`
+remain for anyone who wants to inspect a recording before running it.
+
+**The status line now names the keys it recorded**, so "did it capture what I
+did?" is answered directly instead of requiring a replay to find out:
+
+```
+route: 12 events, 6.0 s - w, space, LButton
+```
+
+**Fixed while doing the above:** the route loader rejected signed numbers, but
+cursor positions relative to a window can legitimately be negative, so a route
+recorded on a shifted window would have had those positions silently zeroed.
+
 ## 1.0.0
 
 First release.

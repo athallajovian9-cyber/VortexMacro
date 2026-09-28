@@ -22,9 +22,14 @@ a placeholder and record a route before expecting a real harvest.
      It starts the macro and opens Roblox at the same time.
   3. In the Roblox window, get yourself to the spot you want to
      farm. Stand where the macro should begin.
-  4. Press F7, play ONE full loop by hand, then press F7 again.
-     See "RECORDING A ROUTE" below - this is the step that matters.
-  5. Press F1.
+  4. Press F9, play ONE full loop by hand, then press F9 again.
+
+  That is the whole setup. F9 saves the loop and starts running it
+  immediately. Nothing to configure first - not even the location.
+
+  The full recording walkthrough is under "RECORDING A ROUTE" below.
+  F7 and F8 still work if you would rather check a recording before
+  running it: F7 records, F8 replays it once, F1 runs it.
 
   That's it. The macro GUI window closes itself while it runs (this
   is normal - it hides so it doesn't get in your way). Bring it back
@@ -75,11 +80,15 @@ a placeholder and record a route before expecting a real harvest.
   CONTROLS  (these work anywhere, even in-game)
 --------------------------------------------------------------------
 
+  F9    RECORD AND RUN - press, play the loop once, press again.
+        It saves the loop and starts running it straight away.
+        This is the whole job in two presses.
+
+  F7    record a route only - press, play the loop, press again to save
+  F8    replay the recorded route once, to check it before running
+
   F1    start the macro
   F2    pause / stop the macro (and bring the GUI back)
-
-  F7    record a route  - press, play the loop, press again to save
-  F8    replay the recorded route once, to check it
 
   F3    live pixel readout  - for checking that vision can see
   F4    mark the next watch point (optional, see the Vision section)

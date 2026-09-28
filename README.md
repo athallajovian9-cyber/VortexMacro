@@ -80,11 +80,14 @@ Full walkthrough with the reasoning behind each step is in `README.txt`.
 ### Keys
 
 ```
-F1    start / resume             F5    vision self-test
-F2    pause / stop               F6    clear watch points
-F3    live pixel readout         F7    start / stop recording
-F4    mark next watch point      F8    play the recorded route once
-                                 Tray  right-click to exit
+F9    RECORD AND RUN - press, play the loop once, press again.
+      Saves the loop and starts running it straight away. Two presses.
+F7    record a route only          F8    replay it once, to check
+F1    start / resume               F5    vision self-test
+F2    pause / stop                 F6    clear watch points
+F3    live pixel readout           F7    start / stop recording
+F4    mark next watch point        F8    play the recorded route once
+                                  Tray  right-click to exit
 ```
 
 ## How it decides what to do
