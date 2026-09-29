@@ -1,5 +1,31 @@
 # Prospecting — mechanics that affect this macro
 
+## Prerequisites — set these FIRST, or nothing else here works
+
+The game and Windows both have requirements that decide whether *any* macro for this
+game functions at all. They are not preferences. A previous version of this project
+spent hours diagnosing a macro as "broken" when the cause was display scaling.
+
+| Requirement | Why |
+|---|---|
+| **Windows display scaling 100%** | Scaling shifts every screen coordinate. Detection that samples fixed positions reads the wrong pixels, and the character walks into walls or despawns. |
+| **Game resolution 1920x1080** | Detection is tuned per resolution — see the caveat below. |
+| **Screen Shake OFF** (Roblox settings) | High-frequency visual disturbance defeats any "wait until the screen settles" test: the screen never settles, so every step runs to its time ceiling. |
+| **Camera: Classic** | The stock camera; other modes move the view in ways fixed probes do not expect. |
+| **Shift Lock OFF** | Movement and camera offsets differ with it on. |
+| **Official Roblox launcher** (roblox.com/download) | The Microsoft Store build fails to boot scripts with error `0x1023`. |
+| **AutoHotkey v1.1, not v2** | v1.1 macro code handed to the v2 interpreter does not parse. On Windows the `.ahk` association is the AHK **UX launcher**, which picks the engine from a script's `#Requires` header and **defaults to v2 when there is none** — so a v1 script can fail to open even with v1.1 installed. |
+
+**Known caveat on resolution.** The reference macro's probes are hand-tuned for heights
+`768 / 953 / 1050` and widths `1366 / 1680 / 1856`. There is **no 1920x1080 case**, which
+is the resolution its own guidance recommends. At 1920x1080 every probe therefore runs
+on its base ratio. That is the most likely underlying cause of "walks into walls" beyond
+scaling, and it is documented as an unfixed issue rather than papered over.
+
+**A correction worth recording:** an earlier version of this project advised turning
+Shift Lock ON for camera stability. For this game that is **wrong** — Shift Lock should
+be OFF with the camera on Classic.
+
 Notes on the game's actual mechanics, kept here because several of them change what
 the macro must do. Corrections welcome; anything wrong here means the macro is wrong.
 
