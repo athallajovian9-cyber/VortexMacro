@@ -35,6 +35,7 @@ INCLUDE_FILES = [
 INCLUDE_DIRS = [
     "assets",
     "maps",
+    "templates",
     "submacro",
     "tests",
     "tools",
