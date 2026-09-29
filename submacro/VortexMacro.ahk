@@ -413,6 +413,13 @@ _BuildGui() {
     ; path file was ignored too.
     _RouteLoad()
     _PathLoad()
+    ; Warn before the loop starts if this biome is above the shovel's tier - in
+    ; game that means zero yield, which looks like a broken macro.
+    t := _TierCheck()
+    if (t != "") {
+        _Log("WARNING: " . t)
+        _SetStatus("SHOVEL TOO WEAK", "cFF6B4A")
+    }
     _Log("Ready. " . _CalibSummary())
 }
 
@@ -2067,6 +2074,40 @@ _PathReady() {
     return IsSet(HasPath) ? HasPath : false
 }
 
+; --- shovel toughness gate ------------------------------------------------- #
+; A biome has a strict Toughness Level. If the shovel's Dig Strength is BELOW the
+; area's requirement you cannot extract anything from that ground AT ALL, so the
+; macro would walk, click and achieve nothing - indistinguishable from being
+; broken. So warn loudly at startup rather than fail silently. It is a WARNING,
+; not a block: only the player knows their real tier.
+;
+; Data: maps\tiers.ini (biome -> T<n>). Player's tier: [options] shovelTier in the
+; config, where 0 means "not set" and disables the check - the macro does not
+; guess a tier it was never told.
+_TierCheck() {
+    global MapsDir, ActiveLocation, CfgFile
+
+    f := MapsDir . "\tiers.ini"
+    if !FileExist(f)
+        return ""
+    req := Trim(IniRead(f, "tiers", ActiveLocation, ""))
+    if (req = "")
+        return ""                        ; map not in the table: no opinion
+    if (SubStr(req, 1, 1) = "N" or SubStr(req, 1, 1) = "n")
+        return ""                        ; N = no requirement
+    if !RegExMatch(req, "(\d+)", &m)
+        return ""
+    need := m[1] + 0
+
+    have := IniRead(CfgFile, "options", "shovelTier", "0") + 0
+    if (have = 0)
+        return ""                        ; player never set their tier
+    if (have < need)
+        return "SHOVEL TOO WEAK: " . ActiveLocation . " needs " . req
+            . ", your shovel is T" . have . " - nothing can be extracted here"
+    return ""
+}
+
 ; Execute one cycle of the path. Every action reuses the same primitives the
 ; built-in cycle uses, so self-tuning caps, the learned mask, stuck detection
 ; and the foreground guard all still apply.
@@ -2637,6 +2678,11 @@ _SetLocation(name, force) {
     _LoadWatches()
     _RouteLoad()
     _PathLoad()
+    t := _TierCheck()
+    if (t != "") {
+        _Log("WARNING: " . t)
+        _SetStatus("SHOVEL TOO WEAK", "cFF6B4A")
+    }
     IniWrite(name, CfgFile, "options", "location")
     _RefreshVisionTab()
     _SetLocPanelStatus(0, "")

@@ -25,6 +25,7 @@ DIST = os.path.join(ROOT, "dist")
 # new file in the working folder cannot leak into a release by accident.
 INCLUDE_FILES = [
     "launcher.bat",
+    "GAME_MECHANICS.md",
     "README.txt",
     "README.md",
     "CHANGELOG.md",
