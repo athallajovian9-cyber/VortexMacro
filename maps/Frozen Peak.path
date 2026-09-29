@@ -1,0 +1,47 @@
+; Frozen Peak  -  Prospecting
+;
+; NAVIGATION taken from the reference macro (Script14.ahk), which is
+; hand-authored per location: Send {key down} / Sleep N / Send {key up},
+; expressed here as `hold`. Only the navigation is theirs.
+;
+; The dig and the panning clicks below come from the control scheme the
+; player confirmed: hold left mouse to dig, stand in water and click to pan.
+; Dig length is computed from the Dig Speed stat (see `dig`).
+;
+; Not carried over from the reference: HotbarMove() (it repositions the
+; mouse for their own pixel probes) and their known bugs.
+;
+; Lines this translator did not understand (kept for review):
+;   CoordMode, Pixel, Window
+;   CoordMode, Mouse, Window
+;   global navigationDelay := A_Args.Length() >= 2 ? A_Args[2] : 300
+;   NavigationSleep() {
+;   global navigationDelay
+;   }
+;   if (A_Args.Length() >= 1) {
+;   digspeed := A_Args[1]
+
+release            ; clear any key a previous cycle left held
+wait  1000
+release
+hold  d     900
+hold  s     3300
+hold  a     600
+hold  e     100
+wait  100
+hold  w     50
+wait  100
+wait  50
+wait  50
+hold  1     50
+hold  w     8300
+release
+wait  50
+hold  a     2800
+wait  50
+hold  left  1480
+
+dig                ; HOLD left mouse to dig (time from the Dig Speed stat)
+wait  400
+click 14           ; pan: stand in water and click repeatedly
+wait  500

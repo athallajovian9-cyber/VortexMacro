@@ -367,6 +367,17 @@ _BuildGui() {
     UI["btnAuto"] := g.Add("Button", "x440 y" . (y + 148) . " w210 h28", "Test auto vision")
     UI["btnAuto"].OnEvent("Click", (*) => _AutoVisionTest())
 
+    ; --- learn what matters (the new zero-setup path) ---
+    g.SetFont("s9 c6C7A89", "Segoe UI")
+    g.Add("Text", "x28 y" . (y + 258) . " w620 +Background0F1317",
+        "LEARN WHAT MATTERS   play one dig cycle; the macro works out which pixels carry")
+    g.Add("Text", "x28 y" . (y + 274) . " w620 +Background0F1317",
+        "information, so a step ends when the HUD changes - not when the scenery does")
+    UI["btnLearn"] := g.Add("Button", "x28 y" . (y + 298) . " w280 h30", "Learn now (20s)")
+    UI["btnLearn"].OnEvent("Click", _LearnSigRun)
+    UI["btnLearnClr"] := g.Add("Button", "x318 y" . (y + 298) . " w180 h30", "Forget learned")
+    UI["btnLearnClr"].OnEvent("Click", _LearnSigClear)
+
     UI["cbManual"] := g.Add("Checkbox", "x152 y" . (y + 230) . " w480", "Prefer marked watch points (off = always auto)")
     UI["cbManual"].Value := Opt["useManual"]
 
@@ -395,6 +406,13 @@ _BuildGui() {
         _SaveConfig()
         _Log("First run - wrote default settings to " . CfgFile)
     }
+    ; Load BOTH the recorded route and the path at startup. They used to be loaded
+    ; only inside _SetLocation, which early-returns when the location has not
+    ; changed - so on a normal launch neither was read: HasRoute stayed false and
+    ; the UI said "NO ROUTE" even with a perfectly good recording on disk, and the
+    ; path file was ignored too.
+    _RouteLoad()
+    _PathLoad()
     _Log("Ready. " . _CalibSummary())
 }
 
@@ -622,12 +640,16 @@ _StepText(name) {
     key := _CapKeyFor(name)
     isClicks := (name = "wash_done")
     unit := isClicks ? " clicks" : " ms"
-    ceil := Caps[key]
+    ; NOT "ceil": AHK v2 treats Ceil() as a built-in function, and assigning to
+    ; that name throws "This Func cannot be used as an output variable" when this
+    ; runs. Ahk2Exe still compiles it happily, so a parse check does not catch
+    ; it - only execution does.
+    ceilMs := Caps[key]
     if (s.n = 0)
-        return "no data yet                                        ceiling " . Round(ceil) . unit
+        return "no data yet                                        ceiling " . Round(ceilMs) . unit
     return "avg " . Round(s.total / s.n) . unit
         . "   last " . Round(s.last) . unit
-        . "   ceiling " . Round(ceil) . unit
+        . "   ceiling " . Round(ceilMs) . unit
         . "   early-stop " . s.early . "/" . s.n
 }
 
@@ -644,6 +666,10 @@ _CalibSummary() {
     global Watches, ActiveLocation, Opt, HasRoute
     if HasRoute
         return ActiveLocation . "   |   ROUTE REPLAY   -   " . _RouteSummary()
+    ; Without this the status claimed "NO ROUTE YET" even with a path loaded, so
+    ; neither the user nor the log could tell which of the three modes was live.
+    if _PathReady()
+        return ActiveLocation . "   |   PATH   -   " . _PathSummary()
 
     n := 0
     for name in WatchOrder
@@ -893,7 +919,9 @@ _RouteLoad() {
     raw := []
     bad := 0
     Loop Read, f {
-        line := Trim(A_LoopReadLine)
+        ; Strip a UTF-8 BOM if present: the recorder writes one, and it lands in
+        ; front of the first line's timestamp, turning a valid line into a bad one.
+        line := Trim(LTrim(A_LoopReadLine, Chr(0xFEFF)))
         if (line = "" or SubStr(line, 1, 1) = ";")
             continue
         parts := StrSplit(line, "`t")
@@ -938,7 +966,12 @@ _RouteLoad() {
     for e in raw {
         if (e.d = "down")
             open[e.k] := true
-        else
+        else if (open.Has(e.k))
+            ; Only close a key that was actually held. Map.Delete() THROWS
+            ; "Item has no value" on a missing key, and a recorded route legitimately
+            ; opens with a release - the recording starts with the hotkey that
+            ; stopped the previous one still coming up (F7/vk76 in practice), which
+            ; crashed the entire load and made a valid route look like no route.
             open.Delete(e.k)
     }
     if (open.Count > 0) {
@@ -1171,14 +1204,23 @@ SuperMacroLoop() {
             continue
         }
 
+        ; The reference macro sets SendMode Event in all 22 of its scripts while
+        ; AHK v2 defaults to SendInput. That is strong evidence Roblox wants
+        ; Event-mode input, so match the macro that demonstrably works on this
+        ; game instead of trusting the default.
+        SendMode("Event")
         tCycle := A_TickCount
 
         ; A recorded route replaces the built-in steps completely. The built-in
         ; sequence assumes a control scheme that was never confirmed against the
         ; real game - which is exactly why it walked forward and back without
         ; digging. Once a route exists, what the player actually did is replayed.
+        ; Priority: a recording (what you actually did) beats a path file (a
+        ; hand-written symbolic sequence) beats the built-in guess.
         if HasRoute
             _RunRouteCycle()
+        else if _PathReady()
+            _RunPathCycle()
         else
             _RunStepCycle()
 
@@ -1354,7 +1396,7 @@ _RunManual(key, watchName, capMs) {
 ; while a hold key is down) and be cut short before anything happened. The floor
 ; is derived from the self-tuning ceiling, so it tracks the learned duration.
 _RunAuto(key, capMs) {
-    global Toggle, Opt
+    global Toggle, Opt, LearnSig
 
     r := _GameRect()
     floorMs := Round(capMs * 0.55)
@@ -1369,7 +1411,14 @@ _RunAuto(key, capMs) {
     while (Toggle) {
         Sleep(Opt["pollMs"])
         cur := _CaptureSig(r)
-        d := _SigDelta(prev, cur)
+        ; Judge the settle on the learned informative cells when a mask exists.
+        ; The whole-grid average is dominated by scenery that never sits still,
+        ; which is what made every step run to its ceiling instead of stopping
+        ; when the HUD actually changed.
+        if (LearnSig.mask)
+            d := _SigDeltaMasked(prev, cur, LearnSig.mask)
+        else
+            d := _SigDelta(prev, cur)
         prev := cur
 
         if (d <= Opt["stillTol"])
@@ -1395,6 +1444,17 @@ _HoldKey(key, dir) {
         Click(dir)
     else
         Send("{" . key . " " . dir . "}")
+}
+
+; Release everything a cycle could have left held. Every one of the reference
+; macro's 20 location scripts begins with this, which is a strong hint that a
+; cycle aborted mid-hold is a real failure mode - and a stuck W or held mouse
+; button is exactly the kind of bug that walks your character off a cliff while
+; you are not looking.
+_ReleaseAll() {
+    for k in ["w", "a", "s", "d", "space", "left", "right"]
+        Send("{" . k . " up}")
+    Click("up")
 }
 
 _Wash() {
@@ -1667,6 +1727,579 @@ _GameFocused() {
     } catch {
         return false
     }
+}
+
+; =====================================================================
+;  PATH FILES   -  per-map symbolic paths, NO recording required
+; =====================================================================
+; WHY THIS EXISTS
+;   Natro Macro drives Bee Swarm with no recording because its authors wrote,
+;   per field, a symbolic path script (nm_Walk(67.5, BackKey), RotRight) plus a
+;   per-field config - 91 path files, 12 patterns, 301 image assets. VortexMacro
+;   shipped none of that: 35 of 37 maps are empty stubs and there is no path data
+;   at all, so the only thing it could run was the built-in guess, which walked
+;   forward and back without digging.
+;
+;   A path file is that missing layer: a small, readable, per-map list of
+;   symbolic actions. It needs no recording because the DURATIONS ARE NOT
+;   HARD-CODED - a "step" ends when the screen changes, which is what _Step
+;   already does and what makes it more robust than a fixed nm_Walk(67.5) aimed
+;   at a game whose map geometry nobody has measured yet.
+;
+; FORMAT   maps\<location>.path   -  one directive per line, ";" comments.
+;
+;   step  <key> <watch> <cap>   press key until <watch> changes (vision-driven)
+;   hold  <key> <ms>            hold key for a fixed time (nm_Walk analogue)
+;   wash                        run the wash routine
+;   wait  <ms>                  pause
+;
+; A worked example, which is all a map needs to stop being a stub:
+;   step  w      at_node   nodeCap
+;   step  mouse  dig_done  digCap
+;   step  s      at_water  waterCap
+;   wash
+PathSteps := []
+HasPath   := false
+
+_PathFile() {
+    global MapsDir, ActiveLocation
+    return MapsDir . "\" . ActiveLocation . ".path"
+}
+
+; --- template images (AHK built-in ImageSearch, no runtime dependency) ----- #
+; This is the capability the macro lacked. The reference macro for this game
+; probes single pixels at hand-tuned coordinates, which is exactly how it shipped
+; an undefined-variable bug AND no support for 1920x1080. A template image
+; tolerates lighting changes and small position shifts, and does not care what
+; resolution you run at.
+;
+; Templates live in <root>\templates\<name>.png and a path file refers to them by
+; bare name, so no path in a path file can reach outside that folder.
+_TemplateFile(name) {
+    global RootDir
+    return RootDir . "\templates\" . name . ".png"
+}
+
+; PNG width/height read straight out of the IHDR chunk - no GDI+, no image
+; library, no dependency. Values are big-endian in the file and must be
+; assembled byte by byte; NumGet alone would byte-swap them.
+_PngSize(file, &w, &h) {
+    w := 0, h := 0
+    if !FileExist(file)
+        return false
+    f := FileOpen(file, "r")
+    if !f
+        return false
+    buf := Buffer(24, 0)
+    got := f.RawRead(buf, 24)
+    f.Close()
+    if (got < 24)
+        return false
+    if (NumGet(buf, 0, "UInt") != 0x474E5089)      ; PNG signature
+        return false
+    w := (NumGet(buf, 16, "UChar") << 24) | (NumGet(buf, 17, "UChar") << 16)
+       | (NumGet(buf, 18, "UChar") << 8)  |  NumGet(buf, 19, "UChar")
+    h := (NumGet(buf, 20, "UChar") << 24) | (NumGet(buf, 21, "UChar") << 16)
+       | (NumGet(buf, 22, "UChar") << 8)  |  NumGet(buf, 23, "UChar")
+    return (w > 0 and h > 0)
+}
+
+; Find a template inside the game client area. On success x/y become the CENTRE
+; of the match, which is what you want to click.
+_FindTemplate(name, &x, &y, tol := 30) {
+    x := 0, y := 0
+    t := _TemplateFile(name)
+    if !FileExist(t)
+        return false
+    r := _GameRect()
+    fx := 0, fy := 0
+    try {
+        if (ImageSearch(&fx, &fy, r.x, r.y, r.x + r.w, r.y + r.h, "*" . tol . " " . t)) {
+            ; "&" is required at the CALL site as well as in the declaration. Without
+            ; it tw/th are never assigned - AHK warns "tw appears to never be
+            ; assigned a value" and the centre maths below runs on empty values.
+            tw := 0, th := 0
+            if (_PngSize(t, &tw, &th) and tw > 0 and th > 0) {
+                x := fx + tw // 2
+                y := fy + th // 2
+            } else {
+                ; Template found but its size could not be read: click the match
+                ; point itself rather than reporting a bogus centre.
+                x := fx
+                y := fy
+                _Log("Template '" . name . "' matched but its PNG size could not be "
+                    . "read - clicking the match point instead of its centre.")
+            }
+            return true
+        }
+    }
+    return false
+}
+
+; Poll until the template shows up. Returns true if it appeared.
+_WaitTemplate(name, capMs, tol := 30) {
+    global Toggle
+    t0 := A_TickCount
+    loop {
+        if (!Toggle)
+            return false
+        if (_FindTemplate(name, &x, &y, tol))
+            return true
+        if (A_TickCount - t0 >= capMs)
+            return false
+        Sleep(60)
+    }
+}
+
+; Click the template where it is now. Returns false if it is not on screen, so a
+; caller can react (log it) instead of clicking blind.
+_ClickTemplate(name, tol := 30) {
+    if (!_FindTemplate(name, &x, &y, tol))
+        return false
+    Click(x . " " . y)
+    return true
+}
+
+
+_InArr(needle, hay) {
+    for v in hay
+        if (v = needle)
+            return true
+    return false
+}
+
+; --- dig hold time -------------------------------------------------------- #
+; Digging is "hold the left mouse button". How long that hold must be is a
+; function of the player's DIG SPEED stat - which is how the established macro
+; for this game does it (Orenate v1.4.8: Round(66900 / (digSpeed + 9))). So the
+; timing does not have to be read off the screen at all: no slider tracking and
+; no vision, just arithmetic on a number the player already knows.
+;
+; Two deliberate departures from that reference:
+;   * it truncates the result to 3 characters (SubStr(fullResult, 1, 3)), which
+;     silently turns a 4-digit hold into a 10x shorter one at low dig speeds.
+;     That is a bug, not a feature, and is not copied.
+;   * the result is clamped to 60..4000 ms, so neither a typo'd stat nor a
+;     future formula change can produce a zero-length or 10-second hold.
+DigSpeed := 100        ; default; a path line can override it with "dig <speed>"
+
+; Read by the path parser, which must not need DigSpeed in its own global list.
+_DigSpeedDefault() {
+    global DigSpeed
+    return DigSpeed
+}
+
+_DigHoldTime(speed) {
+    s := speed + 0
+    if (s <= 0)
+        s := 1
+    return Min(Max(Round(66900 / (s + 9)), 60), 4000)
+}
+
+; Pure parser: text -> {steps, bad, total}. Kept pure so it can be tested with
+; synthetic text and no game running. Tolerance matches _RouteLoad - a bad line
+; is skipped and counted, never thrown, because this runs at startup.
+_PathParseText(text) {
+    global WatchOrder, Caps
+
+    steps := [], bad := 0, total := 0
+    for raw in StrSplit(text, "`n", "`r") {
+        line := Trim(raw)
+        ; Strip a trailing comment FIRST. Without this a bare directive followed
+        ; by a comment - "dig   ; hold from the stat" - tokenises as "dig ;" and
+        ; is rejected as an unreadable speed. Only directives that happened to
+        ; carry arguments before their comment escaped that.
+        cut := InStr(line, ";")
+        if (cut)
+            line := Trim(SubStr(line, 1, cut - 1))
+        if (line = "")
+            continue
+        total += 1
+        p := StrSplit(Trim(RegExReplace(line, "\s+", " ")), " ")
+        d := StrLower(p[1])
+
+        if (d = "step") {
+            if (p.Length < 4) {
+                bad += 1
+                continue
+            }
+            key := p[2], watch := p[3], cap := p[4]
+            ; "mouse" or a plain Send key name; a stray token would be sent as
+            ; literal text into the game, so the name is checked, not trusted.
+            if (!RegExMatch(key, "^[A-Za-z0-9]+$") or !_InArr(watch, WatchOrder)
+                or !Caps.Has(cap)) {
+                bad += 1
+                continue
+            }
+            steps.Push({ d: "step", key: key, watch: watch, cap: cap })
+        }
+        else if (d = "hold") {
+            if (p.Length < 3) {
+                bad += 1
+                continue
+            }
+            ms := _RouteInt(p[3], -1)
+            if (!RegExMatch(p[2], "^[A-Za-z0-9]+$") or ms < 1 or ms > 60000) {
+                bad += 1
+                continue
+            }
+            steps.Push({ d: "hold", key: p[2], ms: ms })
+        }
+        else if (d = "wait") {
+            if (p.Length < 2) {
+                bad += 1
+                continue
+            }
+            ms := _RouteInt(p[2], -1)
+            if (ms < 0 or ms > 600000) {
+                bad += 1
+                continue
+            }
+            steps.Push({ d: "wait", ms: ms })
+        }
+        else if (d = "click") {
+            n := 1
+            if (p.Length >= 2)
+                n := _RouteInt(p[2], -1)
+            if (n < 1 or n > 20) {
+                bad += 1
+                continue
+            }
+            steps.Push({ d: "click", n: n })
+        }
+        else if (d = "dig") {
+            spd := _DigSpeedDefault()
+            if (p.Length >= 2)
+                spd := _RouteInt(p[2], -1)
+            if (spd < 1 or spd > 10000) {
+                bad += 1
+                continue
+            }
+            ; Exactly the reference macro's action - press, hold, release - with
+            ; the hold derived from the dig-speed stat instead of guessed. Emitted
+            ; as a plain "hold" step so it reuses the tested executor path.
+            steps.Push({ d: "hold", key: "mouse", ms: _DigHoldTime(spd) })
+        }
+        else if (d = "await") {
+                    ; Wait for a template to appear on screen. This is the "only act when
+                    ; the game is actually ready" primitive.
+                    if (p.Length < 3) {
+                        bad += 1
+                        continue
+                    }
+                    if (!RegExMatch(p[2], "^[A-Za-z0-9_-]+$")) {
+                        bad += 1
+                        continue
+                    }
+                    cap := _RouteInt(p[3], -1)
+                    if (cap < 1 or cap > 600000) {
+                        bad += 1
+                        continue
+                    }
+                    steps.Push({ d: "await", img: p[2], cap: cap })
+                }
+                else if (d = "clickimg") {
+                    if (p.Length < 2 or !RegExMatch(p[2], "^[A-Za-z0-9_-]+$")) {
+                        bad += 1
+                        continue
+                    }
+                    tol := (p.Length >= 3) ? _RouteInt(p[3], -1) : 30
+                    if (tol < 0 or tol > 255) {
+                        bad += 1
+                        continue
+                    }
+                    steps.Push({ d: "clickimg", img: p[2], tol: tol })
+                }
+                else if (d = "release") {
+                                    steps.Push({ d: "release" })
+                                }
+                                else if (d = "wash") {
+                                    steps.Push({ d: "wash" })
+                                }
+        else
+            bad += 1
+    }
+    return { steps: steps, bad: bad, total: total }
+}
+
+_PathLoad() {
+    global PathSteps, HasPath, ActiveLocation
+
+    PathSteps := []
+    HasPath := false
+    f := _PathFile()
+    if !FileExist(f)
+        return false
+
+    res := _PathParseText(FileRead(f, "UTF-8"))
+    if (res.bad)
+        _Log("Path for " . ActiveLocation . ": skipped " . res.bad
+            . " unreadable line(s).")
+    if (res.steps.Length = 0) {
+        _Log("Path for " . ActiveLocation . " has no usable directives ("
+            . res.total . " line(s) seen) - using the built-in steps.")
+        return false
+    }
+    PathSteps := res.steps
+    HasPath := true
+    return true
+}
+
+_PathSummary() {
+    global PathSteps, ActiveLocation
+    ; IsSet guards: the script can enter its main loop from the 'run' argument
+    ; before the path section's initialisers have executed, so these globals may
+    ; genuinely be unassigned on the first call. Assuming otherwise threw
+    ; "This global variable has not been assigned a value".
+    if (!IsSet(HasPath) or !HasPath)
+        return "no path file - using the built-in steps"
+    if (!IsSet(PathSteps))
+        return "path state not initialised yet"
+    keys := ""
+    for s in PathSteps
+        keys .= (keys = "" ? "" : ",") . s.d
+    return PathSteps.Length . " actions (" . keys . ")"
+}
+
+; Read by the main loop, which must not need HasPath in its own global list.
+_PathReady() {
+    global HasPath
+    return IsSet(HasPath) ? HasPath : false
+}
+
+; Execute one cycle of the path. Every action reuses the same primitives the
+; built-in cycle uses, so self-tuning caps, the learned mask, stuck detection
+; and the foreground guard all still apply.
+;
+; The control scheme these actions assume, as stated by the player for
+; Prospecting - this is no longer a guess:
+;   WASD            walk
+;   hold mousebutton1   dig
+;   click mousebutton1  wash
+; So digging is a HELD button (step mouse ...) and washing is a CLICK (click 1),
+; which is why "wash" and "click" are separate directives rather than one.
+_RunPathCycle() {
+    global Toggle, PathSteps, Caps, Opt
+
+    for s in PathSteps {
+        if (!Toggle)
+            return
+        switch s.d {
+            case "step":
+                _Step(s.key, s.watch, s.cap)
+            case "hold":
+                _HoldKey(s.key, "down")
+                Sleep(s.ms)
+                _HoldKey(s.key, "up")
+            case "click":
+                loop s.n {
+                    if (!Toggle)
+                        break
+                    Click()
+                    Sleep(Opt["clickDelay"])
+                }
+            case "wash":
+                            _Wash()
+                        case "await":
+                            if (!_WaitTemplate(s.img, s.cap))
+                                _Log("Path: template '" . s.img . "' never appeared within "
+                                    . s.cap . "ms - continuing anyway.")
+                        case "clickimg":
+                                                    if (!_ClickTemplate(s.img, s.tol))
+                                                        _Log("Path: template '" . s.img . "' not on screen - click skipped.")
+                                                case "release":
+                                                    _ReleaseAll()
+            case "wait":
+                Sleep(s.ms)
+        }
+    }
+}
+
+
+; =====================================================================
+;  AUTO-WATCH LEARNER   (zero setup - nothing marked, nothing recorded)
+; =====================================================================
+; WHY THIS EXISTS
+;   _RunAuto ends a step when "the scene settled", judged by _SigDelta, which
+;   averages all 576 cells of the 32x18 capture grid. In a real game most of
+;   that grid is scenery - grass, water, particles, a swinging camera - that
+;   never sits still. The average therefore stays high forever, the settle test
+;   never fires early, and every step just runs to its time ceiling. That is the
+;   "it moves forward and back but never digs" behaviour.
+;
+; WHAT THIS DOES
+;   Learns which cells actually carry information, by watching one dig cycle.
+;   The signal is simple and needs no labels: a HUD indicator changes RARELY but
+;   SHARPLY (once or twice a cycle), while scenery changes on nearly every
+;   sample. So a cell is informative when its event count is low but non-zero.
+;   The settle test is then judged on those cells only.
+;
+;   Nothing is marked and nothing is recorded: press Learn, play one cycle.
+
+LearnSig := { active: false, had: false, mask: 0, cells: 0, gw: 32, gh: 18
+            , tol: 18, sweepMs: 400, events: 0, sweeps: 0, kept: 0, maxEv: 0 }
+
+; --- the classifier ------------------------------------------------------- #
+; Pure function over an event-count array, so it is testable with synthetic
+; data and no game running. A cell is kept when it changed at least minEv times
+; (it is not dead) and no more than maxFrac of all sweeps (it is not scenery).
+_ClassifySig(events, n, sweeps, minEv := 1, maxFrac := 0.35) {
+    mask := Buffer(n, 0)
+    kept := 0
+    maxEv := Floor(sweeps * maxFrac)
+    loop n {
+        e := NumGet(events, (A_Index - 1) * 4, "Int")
+        if (e >= minEv and e <= maxEv) {
+            NumPut("UChar", 1, mask, A_Index - 1)
+            kept += 1
+        }
+    }
+    return { mask: mask, kept: kept, maxEv: maxEv }
+}
+
+; --- masked delta --------------------------------------------------------- #
+; Same units as _SigDelta (mean per-channel difference) but only over kept
+; cells, so it reports what the informative part of the screen did. Falls back
+; to the unmasked value when no mask has been learned.
+_SigDeltaMasked(a, b, mask, gw := 32, gh := 18) {
+    total := 0, cells := 0
+    loop gw * gh {
+        i := A_Index - 1
+        if (!NumGet(mask, i, "UChar"))
+            continue
+        off := i * 4
+        total += Abs(NumGet(a, off, "UChar") - NumGet(b, off, "UChar"))
+        total += Abs(NumGet(a, off + 1, "UChar") - NumGet(b, off + 1, "UChar"))
+        total += Abs(NumGet(a, off + 2, "UChar") - NumGet(b, off + 2, "UChar"))
+        cells += 3
+    }
+    return cells ? total / cells : 0
+}
+
+; Per-cell max channel delta between two captures.
+_CellDelta(a, b, i) {
+    off := i * 4
+    return Max(Abs(NumGet(a, off, "UChar") - NumGet(b, off, "UChar"))
+        , Max(Abs(NumGet(a, off + 1, "UChar") - NumGet(b, off + 1, "UChar"))
+            , Abs(NumGet(a, off + 2, "UChar") - NumGet(b, off + 2, "UChar"))))
+}
+
+; --- capture over time ---------------------------------------------------- #
+; A 32x18 StretchBlt is one cheap blit, so a whole sweep costs far less than
+; 576 individual PixelGetColor calls. That is what makes learning affordable.
+_LearnSigSweep(r, events, tol) {
+    global LearnSig
+    n := LearnSig.gw * LearnSig.gh
+    cur := _CaptureSig(r, LearnSig.gw, LearnSig.gh)
+    if (!LearnSig.had) {
+        LearnSig.prev := cur
+        LearnSig.had := true
+        return
+    }
+    prev := LearnSig.prev
+    loop n {
+        i := A_Index - 1
+        if (_CellDelta(prev, cur, i) > tol)
+            NumPut("Int", NumGet(events, i * 4, "Int") + 1, events, i * 4)
+    }
+    LearnSig.prev := cur
+}
+
+; --- the button ----------------------------------------------------------- #
+_LearnSigRun(*) {
+    global LearnSig, UI, Opt
+
+    if (LearnSig.active) {
+        LearnSig.active := false
+        _SetStatus("Learning stopped", "cFFB74D")
+        return
+    }
+
+    r := _GameRect()
+    if (!_GameFocused())
+        _Log("Learn: Roblox is not the foreground window - samples will include whatever is.")
+
+    n := LearnSig.gw * LearnSig.gh
+    events := Buffer(n * 4, 0)
+    LearnSig.had := false
+    LearnSig.active := true
+    LearnSig.sweeps := 0
+
+    _SetStatus("LEARNING - play one cycle", "c64B5F6")
+    _Log("Auto-watch: learning for 20s - play one dig cycle now.")
+
+    t0 := A_TickCount
+    while (LearnSig.active and A_TickCount - t0 < 20000) {
+        _LearnSigSweep(r, events, LearnSig.tol)
+        LearnSig.sweeps += 1
+        _SetStatus("LEARNING  " . Round((A_TickCount - t0) / 1000) . "s", "c64B5F6")
+        Sleep(LearnSig.sweepMs)
+    }
+    LearnSig.active := false
+
+    if (LearnSig.sweeps < 5) {
+        _Log("Auto-watch: only " . LearnSig.sweeps . " sweeps - too few. Nothing learned.")
+        _SetStatus("Learn failed - too short", "cFF6B4A")
+        return
+    }
+
+    res := _ClassifySig(events, n, LearnSig.sweeps)
+    LearnSig.events := events
+    LearnSig.mask := res.mask
+    LearnSig.cells := n
+    LearnSig.kept := res.kept
+    LearnSig.maxEv := res.maxEv
+
+    ; Screen that never changed anywhere means capture is not usable at all -
+    ; say so rather than pretending a mask was learned.
+    dead := 0
+    loop n
+        if (NumGet(events, (A_Index - 1) * 4, "Int") = 0)
+            dead += 1
+
+    if (dead = n) {
+        LearnSig.mask := 0
+        _Log("Auto-watch: NOTHING changed in " . LearnSig.sweeps . " sweeps.")
+        _Log("            Capture is unusable - hardware overlay, black frames, or a static screen.")
+        _SetStatus("Capture unusable", "cFF6B4A")
+        return
+    }
+
+    _Log("Auto-watch: " . res.kept . " of " . n . " cells carry information "
+        . "(changed 1-" . res.maxEv . " times over " . LearnSig.sweeps . " sweeps).")
+    if (res.kept = 0) {
+        LearnSig.mask := 0
+        _Log("            Every cell was either dead or scenery - no usable signal.")
+        _SetStatus("No usable signal", "cFF6B4A")
+        return
+    }
+    _SetStatus("Learned " . res.kept . " cells", "c64B5F6")
+
+    ; Where the informative cells actually are, as screen coordinates, so the
+    ; result is inspectable instead of a black box.
+    top := []
+    loop n {
+        i := A_Index - 1
+        if (NumGet(LearnSig.mask, i, "UChar"))
+            top.Push({ i: i, x: r.x + (r.w * ((Mod(i, 32) + 0.5)) // 32)
+                     , y: r.y + (r.h * ((i // 32 + 0.5)) // 18)
+                     , ev: NumGet(events, i * 4, "Int") })
+    }
+    show := Min(top.Length, 6)
+    loop show {
+        t := top[A_Index]
+        _Log("            cell " . t.i . "  at " . Round(t.x) . "," . Round(t.y)
+            . "  changed " . t.ev . "x")
+    }
+}
+
+_LearnSigClear(*) {
+    global LearnSig
+    LearnSig.mask := 0
+    LearnSig.kept := 0
+    LearnSig.had := false
+    _Log("Auto-watch: learned mask cleared - settle test is back to the whole screen.")
+    _SetStatus("Auto-watch cleared", "cFFFFFF")
 }
 
 ; =====================================================================
@@ -2003,6 +2636,7 @@ _SetLocation(name, force) {
     ActiveLocation := name
     _LoadWatches()
     _RouteLoad()
+    _PathLoad()
     IniWrite(name, CfgFile, "options", "location")
     _RefreshVisionTab()
     _SetLocPanelStatus(0, "")

@@ -1,0 +1,47 @@
+; Haunted Creek  -  Prospecting
+;
+; NAVIGATION taken from the reference macro (Script18.ahk), which is
+; hand-authored per location: Send {key down} / Sleep N / Send {key up},
+; expressed here as `hold`. Only the navigation is theirs.
+;
+; The dig and the panning clicks below come from the control scheme the
+; player confirmed: hold left mouse to dig, stand in water and click to pan.
+; Dig length is computed from the Dig Speed stat (see `dig`).
+;
+; Not carried over from the reference: HotbarMove() (it repositions the
+; mouse for their own pixel probes) and their known bugs.
+;
+; Lines this translator did not understand (kept for review):
+;   ﻿#Requires AutoHotkey v1.1
+;   CoordMode, Pixel, Window
+;   CoordMode, Mouse, Window
+;   if (A_Args.Length() >= 1) {
+;   digspeed := A_Args[1]
+;   } else {
+;   digspeed := 123
+;   }
+
+release            ; clear any key a previous cycle left held
+release
+wait  250
+hold  1     50
+hold  s     300
+hold  a     8700
+hold  s     2000
+hold  a     2900
+hold  w     1000
+release
+wait  3000
+hold  s     5000
+hold  right 1000
+wait  100
+hold  w     6500
+release
+wait  250
+wait  5500
+wait  100
+
+dig                ; HOLD left mouse to dig (time from the Dig Speed stat)
+wait  400
+click 14           ; pan: stand in water and click repeatedly
+wait  500

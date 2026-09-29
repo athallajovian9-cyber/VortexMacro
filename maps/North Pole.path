@@ -1,0 +1,42 @@
+; North Pole  -  Prospecting
+; Symbolic path. No recording, no marking. Edit freely.
+;
+; THE LOOP (from the guides, not guessed)
+;   1. Left-click diggable ground with the shovel equipped -> a timing slider
+;      pops up and sweeps up and down.
+;   2. Left-click when the slider is in the GREEN ZONE at the top. A 100%
+;      Perfect Score raises the weight and quality of the ore in the sand.
+;   3. You MUST stand in the water to pan. Walk to the water, then repeatedly
+;      left-click to shake the pan; each click advances the shake bar by the
+;      pan's Shake Strength and Shake Speed.
+;      (A guide claiming "no water required" is wrong; the player confirms you
+;      do have to stand in the water.)
+;
+; HOW THE DIG TIMING WORKS (no slider tracking needed)
+;   The established macro for this game does not watch the slider either - it
+;   computes the hold from the player's Dig Speed stat:
+;       hold = Round(66900 / (digSpeed + 9))
+;   The "dig" line below does the same thing, so nothing has to be read off the
+;   screen. Change the stat number in that line (e.g. "dig 140") after an
+;   upgrade, or edit the DigSpeed default in the macro. The value is clamped to
+;   60..4000 ms so a wrong number cannot produce a nonsense hold.
+;
+;   step <key> <watch> <cap>   hold key until the watch point changes
+;   hold <key> <ms>            hold key for a fixed time
+;   click [n]                  click left mouse n times
+;   wash                       legacy multi-click wash
+;   wait <ms>                  pause
+;
+; A "step" ends when the screen changes, so no walking distance is hard-coded.
+; Caps are on the Timing tab and self-tune as the loop runs.
+; Watches: at_node, dig_done, at_water, wash_done
+; Caps:    nodeCap, digCap, waterCap, washClicks
+
+step  w      at_node   nodeCap     ; walk to diggable ground
+wait  150
+dig            ; HOLD left mouse; hold time comes from the Dig Speed stat
+wait  400
+step  s      at_water  waterCap    ; walk to the water
+wait  300
+click 14       ; STAND IN WATER, repeatedly click to pan
+wait  500

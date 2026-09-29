@@ -19,3 +19,17 @@ __pycache__/
 # Release output
 dist/
 *.zip
+
+# ---------------------------------------------------------------------------
+# inspiredby/ holds a COPY OF ANOTHER AUTHOR'S MACRO, placed here only as a
+# reference to learn from. It carries their copyright notice ("please do not
+# steal our code") and must never be committed or published. Reference material
+# only; the code in this repo is independent.
+# ---------------------------------------------------------------------------
+inspiredby/
+
+# Generated test scaffolding and result dumps (the .py tests are kept - they are
+# the actual suite; these are their throwaway outputs).
+submacro/_*.ahk
+submacro/_*_result.txt
+tests/*_result.txt
