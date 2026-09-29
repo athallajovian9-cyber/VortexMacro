@@ -2496,10 +2496,15 @@ _LoadMaps() {
     _EnsureMapsDir()
 
     Locations := []
+    ; Data files that live in maps/ but are NOT locations. Without this, the scan
+    ; below offers "tiers" and "locations" as if they were dig sites, because it
+    ; treats every .ini in the folder as a map.
+    NOT_A_MAP := Map("tiers", 1, "locations", 1)
     loop files, MapsDir . "\*.ini" {
         name := SubStr(A_LoopFileName, 1, -4)
-        if (name != "")
-            Locations.Push(name)
+        if (name = "" or NOT_A_MAP.Has(StrLower(name)))
+            continue
+        Locations.Push(name)
     }
 
     if (Locations.Length = 0) {
